@@ -1,0 +1,22 @@
+# Configuracoes locais do VS Code
+.vscode/
+
+# Arquivos objeto
+*.o
+*.obj
+
+# Arquivos de depuracao e falhas
+core
+core.*
+vgcore.*
+.gdb_history
+
+# Arquivos temporarios de editores
+*.tmp
+*.swp
+*.swo
+*~
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
