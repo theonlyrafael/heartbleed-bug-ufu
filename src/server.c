@@ -53,11 +53,42 @@ int main(void) {
         fail("Erro ao iniciar a escuta");
     }
 
-    printf(
-        "Servidor configurado em 127.0.0.1:%d.\n",
-        SERVER_PORT
+    printf("Servidor aguardando conexao em 127.0.0.1:%d...\n", SERVER_PORT);
+
+    struct sockaddr_in client_address = {0};
+    socklen_t client_address_length = sizeof(client_address);
+
+    int client_fd = accept(
+        server_fd,
+        (struct sockaddr *)&client_address,
+        &client_address_length
     );
 
+    if (client_fd == -1) {
+        close(server_fd);
+        fail("Erro ao aceitar a conexao");
+    }
+
+    char client_ip[INET_ADDRSTRLEN];
+
+    if (inet_ntop(
+            AF_INET,
+            &client_address.sin_addr,
+            client_ip,
+            sizeof(client_ip)
+        ) == NULL) {
+        close(client_fd);
+        close(server_fd);
+        fail("Erro ao identificar o cliente");
+    }
+
+    printf(
+        "Conexao aceita de %s:%d.\n",
+        client_ip,
+        ntohs(client_address.sin_port)
+    );
+
+    close(client_fd);
     close(server_fd);
 
     return EXIT_SUCCESS;
