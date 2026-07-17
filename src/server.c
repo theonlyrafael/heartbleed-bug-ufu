@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -7,10 +8,32 @@
 
 #define SERVER_PORT 9090
 #define CONNECTION_BACKLOG 1
+#define MAX_PAYLOAD_SIZE 64
 
 static void fail(const char *message) {
     perror(message);
     exit(EXIT_FAILURE);
+}
+
+static ssize_t receive_all(int socket_fd, void *buffer, size_t size) {
+    size_t received = 0;
+
+    while (received < size) {
+        ssize_t result = recv(
+            socket_fd,
+            (char *)buffer + received,
+            size - received,
+            0
+        );
+
+        if (result <= 0) {
+            return result;
+        }
+
+        received += (size_t)result;
+    }
+
+    return (ssize_t)received;
 }
 
 int main(void) {
@@ -69,25 +92,61 @@ int main(void) {
         fail("Erro ao aceitar a conexao");
     }
 
-    char client_ip[INET_ADDRSTRLEN];
+    uint16_t declared_size_network;
+    uint16_t payload_size_network;
 
-    if (inet_ntop(
-            AF_INET,
-            &client_address.sin_addr,
-            client_ip,
-            sizeof(client_ip)
-        ) == NULL) {
+    if (receive_all(
+            client_fd,
+            &declared_size_network,
+            sizeof(declared_size_network)
+        ) != sizeof(declared_size_network)) {
         close(client_fd);
         close(server_fd);
-        fail("Erro ao identificar o cliente");
+        fail("Erro ao receber o tamanho declarado");
     }
 
-    printf(
-        "Conexao aceita de %s:%d.\n",
-        client_ip,
-        ntohs(client_address.sin_port)
-    );
+    if (receive_all(
+            client_fd,
+            &payload_size_network,
+            sizeof(payload_size_network)
+        ) != sizeof(payload_size_network)) {
+        close(client_fd);
+        close(server_fd);
+        fail("Erro ao receber o tamanho real");
+    }
 
+    uint16_t declared_size = ntohs(declared_size_network);
+    uint16_t payload_size = ntohs(payload_size_network);
+
+    if (payload_size == 0 || payload_size > MAX_PAYLOAD_SIZE) {
+        close(client_fd);
+        close(server_fd);
+        fprintf(stderr, "Tamanho real do payload invalido.\n");
+        return EXIT_FAILURE;
+    }
+
+    char *payload = malloc((size_t)payload_size + 1);
+
+    if (payload == NULL) {
+        close(client_fd);
+        close(server_fd);
+        fail("Erro ao alocar o payload");
+    }
+
+    if (receive_all(client_fd, payload, payload_size) != payload_size) {
+        free(payload);
+        close(client_fd);
+        close(server_fd);
+        fail("Erro ao receber o payload");
+    }
+
+    payload[payload_size] = '\0';
+
+    printf("Payload recebido: %s\n", payload);
+    printf("Tamanho real: %u bytes\n", payload_size);
+    printf("Tamanho declarado: %u bytes\n", declared_size);
+
+    free(payload);
     close(client_fd);
     close(server_fd);
 
