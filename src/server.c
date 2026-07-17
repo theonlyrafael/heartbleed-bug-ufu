@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -10,6 +11,8 @@
 #define CONNECTION_BACKLOG 1
 #define MAX_PAYLOAD_SIZE 64
 #define MAX_DECLARED_SIZE 512
+#define HEAP_BLOCK_COUNT 8
+#define SECRET_VALUE "Segredo ultrassecreto que ninguem podera desvendar. Chora mais!"
 
 static void fail(const char *message) {
     perror(message);
@@ -58,7 +61,36 @@ static ssize_t send_all(int socket_fd, const void *buffer, size_t size) {
     return (ssize_t)sent;
 }
 
+static void prepare_heap(void) {
+    void *blocks[HEAP_BLOCK_COUNT];
+
+    for (size_t i = 0; i < HEAP_BLOCK_COUNT; i++) {
+        size_t block_size = 128 + (i * 64);
+
+        blocks[i] = malloc(block_size);
+
+        if (blocks[i] == NULL) {
+            fail("Erro ao preparar o heap");
+        }
+
+        memset(blocks[i], (int)('A' + i), block_size);
+    }
+
+    for (size_t i = 0; i < HEAP_BLOCK_COUNT; i += 2) {
+        free(blocks[i]);
+        blocks[i] = NULL;
+    }
+
+    for (size_t i = 1; i < HEAP_BLOCK_COUNT; i += 2) {
+        free(blocks[i]);
+    }
+
+    printf("Heap preparado com varias alocacoes e desalocacoes.\n");
+}
+
 int main(void) {
+    prepare_heap();
+
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (server_fd == -1) {
@@ -98,7 +130,10 @@ int main(void) {
         fail("Erro ao iniciar a escuta");
     }
 
-    printf("Servidor aguardando conexao em 127.0.0.1:%d...\n", SERVER_PORT);
+    printf(
+        "Servidor aguardando conexao em 127.0.0.1:%d...\n",
+        SERVER_PORT
+    );
 
     struct sockaddr_in client_address = {0};
     socklen_t client_address_length = sizeof(client_address);
@@ -171,24 +206,42 @@ int main(void) {
 
     payload[payload_size] = '\0';
 
+    size_t secret_size = strlen(SECRET_VALUE) + 1;
+    char *secret = malloc(secret_size);
+
+    if (secret == NULL) {
+        free(payload);
+        close(client_fd);
+        close(server_fd);
+        fail("Erro ao alocar a string secreta");
+    }
+
+    memcpy(secret, SECRET_VALUE, secret_size);
+
     printf("Payload recebido: %s\n", payload);
     printf("Tamanho real: %u bytes\n", payload_size);
     printf("Tamanho declarado: %u bytes\n", declared_size);
+    printf("String secreta armazenada no heap.\n");
 
     /*
      * Vulnerabilidade intencional:
-     * o buffer possui apenas payload_size + 1 bytes, mas o servidor
-     * envia declared_size bytes a partir do mesmo endereco.
+     * o payload possui somente payload_size + 1 bytes, mas o servidor
+     * envia declared_size bytes a partir do endereco desse buffer.
      */
     if (send_all(client_fd, payload, declared_size) != declared_size) {
+        free(secret);
         free(payload);
         close(client_fd);
         close(server_fd);
         fail("Erro ao enviar a resposta vulneravel");
     }
 
-    printf("Servidor enviou %u bytes a partir do buffer pequeno.\n", declared_size);
+    printf(
+        "Servidor enviou %u bytes a partir do buffer pequeno.\n",
+        declared_size
+    );
 
+    free(secret);
     free(payload);
     close(client_fd);
     close(server_fd);
