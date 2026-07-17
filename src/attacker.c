@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,47 @@ static ssize_t send_all(int socket_fd, const void *buffer, size_t size) {
     }
 
     return (ssize_t)sent;
+}
+
+static ssize_t receive_all(int socket_fd, void *buffer, size_t size) {
+    size_t received = 0;
+
+    while (received < size) {
+        ssize_t result = recv(
+            socket_fd,
+            (char *)buffer + received,
+            size - received,
+            0
+        );
+
+        if (result <= 0) {
+            return result;
+        }
+
+        received += (size_t)result;
+    }
+
+    return (ssize_t)received;
+}
+
+static void print_memory(const unsigned char *buffer, size_t size) {
+    printf("\nConteudo recebido em formato hexadecimal:\n");
+
+    for (size_t i = 0; i < size; i++) {
+        printf("%02x ", buffer[i]);
+
+        if ((i + 1) % 16 == 0) {
+            printf("\n");
+        }
+    }
+
+    printf("\nRepresentacao textual:\n");
+
+    for (size_t i = 0; i < size; i++) {
+        putchar(isprint(buffer[i]) ? buffer[i] : '.');
+    }
+
+    printf("\n");
 }
 
 int main(void) {
@@ -90,10 +132,26 @@ int main(void) {
         fail("Erro ao enviar o payload");
     }
 
-    printf("Solicitacao heartbeat enviada.\n");
-    printf("Tamanho real: %u bytes\n", payload_size);
-    printf("Tamanho declarado: %d bytes\n", DECLARED_SIZE);
+    unsigned char *response = malloc(DECLARED_SIZE);
 
+    if (response == NULL) {
+        close(socket_fd);
+        fail("Erro ao alocar a resposta");
+    }
+
+    if (receive_all(socket_fd, response, DECLARED_SIZE) != DECLARED_SIZE) {
+        free(response);
+        close(socket_fd);
+        fail("Erro ao receber a resposta");
+    }
+
+    printf("Payload enviado: %s\n", payload);
+    printf("Tamanho real enviado: %u bytes\n", payload_size);
+    printf("Tamanho solicitado: %d bytes\n", DECLARED_SIZE);
+
+    print_memory(response, DECLARED_SIZE);
+
+    free(response);
     close(socket_fd);
 
     return EXIT_SUCCESS;

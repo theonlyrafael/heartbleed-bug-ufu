@@ -9,6 +9,7 @@
 #define SERVER_PORT 9090
 #define CONNECTION_BACKLOG 1
 #define MAX_PAYLOAD_SIZE 64
+#define MAX_DECLARED_SIZE 512
 
 static void fail(const char *message) {
     perror(message);
@@ -34,6 +35,27 @@ static ssize_t receive_all(int socket_fd, void *buffer, size_t size) {
     }
 
     return (ssize_t)received;
+}
+
+static ssize_t send_all(int socket_fd, const void *buffer, size_t size) {
+    size_t sent = 0;
+
+    while (sent < size) {
+        ssize_t result = send(
+            socket_fd,
+            (const char *)buffer + sent,
+            size - sent,
+            0
+        );
+
+        if (result <= 0) {
+            return result;
+        }
+
+        sent += (size_t)result;
+    }
+
+    return (ssize_t)sent;
 }
 
 int main(void) {
@@ -125,6 +147,13 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    if (declared_size == 0 || declared_size > MAX_DECLARED_SIZE) {
+        close(client_fd);
+        close(server_fd);
+        fprintf(stderr, "Tamanho declarado fora do limite da simulacao.\n");
+        return EXIT_FAILURE;
+    }
+
     char *payload = malloc((size_t)payload_size + 1);
 
     if (payload == NULL) {
@@ -145,6 +174,20 @@ int main(void) {
     printf("Payload recebido: %s\n", payload);
     printf("Tamanho real: %u bytes\n", payload_size);
     printf("Tamanho declarado: %u bytes\n", declared_size);
+
+    /*
+     * Vulnerabilidade intencional:
+     * o buffer possui apenas payload_size + 1 bytes, mas o servidor
+     * envia declared_size bytes a partir do mesmo endereco.
+     */
+    if (send_all(client_fd, payload, declared_size) != declared_size) {
+        free(payload);
+        close(client_fd);
+        close(server_fd);
+        fail("Erro ao enviar a resposta vulneravel");
+    }
+
+    printf("Servidor enviou %u bytes a partir do buffer pequeno.\n", declared_size);
 
     free(payload);
     close(client_fd);
