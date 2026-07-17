@@ -104,7 +104,7 @@ static void prepare_heap(void) {
     }
 
     /*
-     * Libera os blocos em uma ordem alternada para simular
+     * Libera os blocos de forma alternada para simular
      * fragmentacao e reutilizacao da memoria.
      */
     for (size_t i = 0; i < HEAP_BLOCK_COUNT; i += 2) {
@@ -144,8 +144,8 @@ static size_t choose_secret_offset(
     size_t hidden_maximum = HEAP_REGION_SIZE - secret_size - 1;
 
     /*
-     * As primeiras tentativas posicionam obrigatoriamente
-     * o segredo fora da parte enviada ao atacante.
+     * Nas primeiras tentativas, o segredo fica obrigatoriamente
+     * fora da regiao devolvida ao atacante.
      */
     if (request_number <= MIN_FAILED_ATTEMPTS) {
         return random_between(
@@ -155,9 +155,8 @@ static size_t choose_secret_offset(
     }
 
     /*
-     * Depois das tentativas iniciais, existe uma chance de
-     * aproximadamente 25% de o segredo ficar dentro da
-     * regiao que sera enviada pelo servidor.
+     * Depois das tentativas iniciais, existe aproximadamente
+     * 25% de chance de o segredo ficar na regiao vazada.
      */
     int should_leak =
         rand() % LEAK_PROBABILITY_DIVISOR == 0;
@@ -258,11 +257,11 @@ static int handle_client(int client_fd) {
     }
 
     /*
-     * Preenche a regiao com dados residuais simulados.
+     * Preenche a regiao com bytes residuais variados.
+     * Na saida textual, bytes nao imprimiveis aparecem como pontos.
      */
     for (size_t i = 0; i < HEAP_REGION_SIZE; i++) {
-        heap_region[i] =
-            (unsigned char)('A' + (rand() % 26));
+        heap_region[i] = (unsigned char)(rand() % 256);
     }
 
     if (receive_all(
@@ -307,6 +306,13 @@ static int handle_client(int client_fd) {
         payload_size,
         secret_size
     );
+
+    /*
+     * Insere uma separacao visual antes da string secreta.
+     * O limite minimo usado no deslocamento garante que o indice
+     * anterior seja valido.
+     */
+    heap_region[secret_offset - 1] = ' ';
 
     memcpy(
         heap_region + secret_offset,
