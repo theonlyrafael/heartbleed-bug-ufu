@@ -8,11 +8,11 @@
 #include <unistd.h>
 
 #define SERVER_PORT 9090
-#define CONNECTION_BACKLOG 1
+#define CONNECTION_BACKLOG 5
 #define MAX_PAYLOAD_SIZE 64
 #define MAX_DECLARED_SIZE 512
 #define HEAP_BLOCK_COUNT 8
-#define SECRET_VALUE "Segredo ultrassecreto que ninguem podera desvendar. Chora mais!"
+#define SECRET_VALUE "SEGREDO: ELES ESTAO DE OLHO EM NOS!"
 
 static void fail(const char *message) {
     perror(message);
@@ -84,13 +84,104 @@ static void prepare_heap(void) {
     for (size_t i = 1; i < HEAP_BLOCK_COUNT; i += 2) {
         free(blocks[i]);
     }
+}
 
-    printf("Heap preparado com varias alocacoes e desalocacoes.\n");
+static int handle_client(int client_fd) {
+    uint16_t declared_size_network;
+    uint16_t payload_size_network;
+
+    char *payload = NULL;
+    char *secret = NULL;
+    int result = EXIT_FAILURE;
+
+    prepare_heap();
+
+    if (receive_all(
+            client_fd,
+            &declared_size_network,
+            sizeof(declared_size_network)
+        ) != sizeof(declared_size_network)) {
+        fprintf(stderr, "Erro ao receber o tamanho declarado.\n");
+        goto cleanup;
+    }
+
+    if (receive_all(
+            client_fd,
+            &payload_size_network,
+            sizeof(payload_size_network)
+        ) != sizeof(payload_size_network)) {
+        fprintf(stderr, "Erro ao receber o tamanho real.\n");
+        goto cleanup;
+    }
+
+    uint16_t declared_size = ntohs(declared_size_network);
+    uint16_t payload_size = ntohs(payload_size_network);
+
+    if (payload_size == 0 || payload_size > MAX_PAYLOAD_SIZE) {
+        fprintf(stderr, "Tamanho real do payload invalido.\n");
+        goto cleanup;
+    }
+
+    if (declared_size == 0 || declared_size > MAX_DECLARED_SIZE) {
+        fprintf(stderr, "Tamanho declarado fora do limite da simulacao.\n");
+        goto cleanup;
+    }
+
+    payload = malloc((size_t)payload_size + 1);
+
+    if (payload == NULL) {
+        fprintf(stderr, "Erro ao alocar o payload.\n");
+        goto cleanup;
+    }
+
+    if (receive_all(client_fd, payload, payload_size) != payload_size) {
+        fprintf(stderr, "Erro ao receber o payload.\n");
+        goto cleanup;
+    }
+
+    payload[payload_size] = '\0';
+
+    size_t secret_size = strlen(SECRET_VALUE) + 1;
+
+    secret = malloc(secret_size);
+
+    if (secret == NULL) {
+        fprintf(stderr, "Erro ao alocar a string secreta.\n");
+        goto cleanup;
+    }
+
+    memcpy(secret, SECRET_VALUE, secret_size);
+
+    printf("\nPayload recebido: %s\n", payload);
+    printf("Tamanho real: %u bytes\n", payload_size);
+    printf("Tamanho declarado: %u bytes\n", declared_size);
+    printf("String secreta armazenada no heap.\n");
+
+    /*
+     * Vulnerabilidade intencional:
+     * o servidor envia declared_size bytes a partir de um buffer
+     * alocado somente para payload_size + 1 bytes.
+     */
+    if (send_all(client_fd, payload, declared_size) != declared_size) {
+        fprintf(stderr, "Erro ao enviar a resposta vulneravel.\n");
+        goto cleanup;
+    }
+
+    printf(
+        "Servidor enviou %u bytes a partir do buffer pequeno.\n",
+        declared_size
+    );
+
+    result = EXIT_SUCCESS;
+
+cleanup:
+    free(secret);
+    free(payload);
+
+    return result;
 }
 
 int main(void) {
-    prepare_heap();
-
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (server_fd == -1) {
@@ -131,119 +222,33 @@ int main(void) {
     }
 
     printf(
-        "Servidor aguardando conexao em 127.0.0.1:%d...\n",
+        "Servidor aguardando conexoes em 127.0.0.1:%d...\n",
         SERVER_PORT
     );
 
-    struct sockaddr_in client_address = {0};
-    socklen_t client_address_length = sizeof(client_address);
+    while (1) {
+        struct sockaddr_in client_address = {0};
+        socklen_t client_address_length = sizeof(client_address);
 
-    int client_fd = accept(
-        server_fd,
-        (struct sockaddr *)&client_address,
-        &client_address_length
-    );
+        int client_fd = accept(
+            server_fd,
+            (struct sockaddr *)&client_address,
+            &client_address_length
+        );
 
-    if (client_fd == -1) {
-        close(server_fd);
-        fail("Erro ao aceitar a conexao");
-    }
+        if (client_fd == -1) {
+            perror("Erro ao aceitar a conexao");
+            continue;
+        }
 
-    uint16_t declared_size_network;
-    uint16_t payload_size_network;
+        printf("\nNova conexao aceita.\n");
 
-    if (receive_all(
-            client_fd,
-            &declared_size_network,
-            sizeof(declared_size_network)
-        ) != sizeof(declared_size_network)) {
+        handle_client(client_fd);
         close(client_fd);
-        close(server_fd);
-        fail("Erro ao receber o tamanho declarado");
+
+        printf("Conexao encerrada. Aguardando nova tentativa...\n");
     }
 
-    if (receive_all(
-            client_fd,
-            &payload_size_network,
-            sizeof(payload_size_network)
-        ) != sizeof(payload_size_network)) {
-        close(client_fd);
-        close(server_fd);
-        fail("Erro ao receber o tamanho real");
-    }
-
-    uint16_t declared_size = ntohs(declared_size_network);
-    uint16_t payload_size = ntohs(payload_size_network);
-
-    if (payload_size == 0 || payload_size > MAX_PAYLOAD_SIZE) {
-        close(client_fd);
-        close(server_fd);
-        fprintf(stderr, "Tamanho real do payload invalido.\n");
-        return EXIT_FAILURE;
-    }
-
-    if (declared_size == 0 || declared_size > MAX_DECLARED_SIZE) {
-        close(client_fd);
-        close(server_fd);
-        fprintf(stderr, "Tamanho declarado fora do limite da simulacao.\n");
-        return EXIT_FAILURE;
-    }
-
-    char *payload = malloc((size_t)payload_size + 1);
-
-    if (payload == NULL) {
-        close(client_fd);
-        close(server_fd);
-        fail("Erro ao alocar o payload");
-    }
-
-    if (receive_all(client_fd, payload, payload_size) != payload_size) {
-        free(payload);
-        close(client_fd);
-        close(server_fd);
-        fail("Erro ao receber o payload");
-    }
-
-    payload[payload_size] = '\0';
-
-    size_t secret_size = strlen(SECRET_VALUE) + 1;
-    char *secret = malloc(secret_size);
-
-    if (secret == NULL) {
-        free(payload);
-        close(client_fd);
-        close(server_fd);
-        fail("Erro ao alocar a string secreta");
-    }
-
-    memcpy(secret, SECRET_VALUE, secret_size);
-
-    printf("Payload recebido: %s\n", payload);
-    printf("Tamanho real: %u bytes\n", payload_size);
-    printf("Tamanho declarado: %u bytes\n", declared_size);
-    printf("String secreta armazenada no heap.\n");
-
-    /*
-     * Vulnerabilidade intencional:
-     * o payload possui somente payload_size + 1 bytes, mas o servidor
-     * envia declared_size bytes a partir do endereco desse buffer.
-     */
-    if (send_all(client_fd, payload, declared_size) != declared_size) {
-        free(secret);
-        free(payload);
-        close(client_fd);
-        close(server_fd);
-        fail("Erro ao enviar a resposta vulneravel");
-    }
-
-    printf(
-        "Servidor enviou %u bytes a partir do buffer pequeno.\n",
-        declared_size
-    );
-
-    free(secret);
-    free(payload);
-    close(client_fd);
     close(server_fd);
 
     return EXIT_SUCCESS;
