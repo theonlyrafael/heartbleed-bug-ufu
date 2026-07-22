@@ -6,7 +6,7 @@
 ![GCC](https://img.shields.io/badge/GCC-Compiler-A42E2B?style=flat)
 ![Make](https://img.shields.io/badge/Make-Build-427819?style=flat)
 ![POSIX Sockets](https://img.shields.io/badge/POSIX-Sockets-4B5563?style=flat)
-![Status](https://img.shields.io/badge/Status-Em%20finaliza%C3%A7%C3%A3o-yellow?style=flat)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-Linux-E95420?style=flat)
 
 Este repositório contém a resolução do **terceiro** trabalho prático da disciplina de Segurança da Informação, do oitavo período do curso de Sistemas de Informação da Universidade Federal de Uberlândia (UFU). 
 
